@@ -105,7 +105,8 @@ deriving Repr, Inhabited
 structure Config where
   /-- The dischargers, as tactic text, tried in order after the hypotheses in scope. Those that do
   not parse in the analyzed environment are left out. -/
-  dischargers : Array String := #["omega", "positivity", "fun_prop", "norm_num", "simp_all"]
+  dischargers : Array String :=
+    #["omega", "infer_instance", "positivity", "fun_prop", "norm_num", "simp_all"]
   /-- The budget of each discharger on each obligation, in the unit of the option `maxHeartbeats`
   (thousands of heartbeats): a hundredth of Lean's default. -/
   heartbeats : Nat := 2000
@@ -143,6 +144,7 @@ private def condition (n : Name) : Option String :=
   | `_notLeftOfOr => some "the left side of ∨ being false"
   | `_ifCondition => some "the condition of if"
   | `_ifNot => some "the condition of if being false"
+  | `_part => some "part of a hypothesis"
   | _ => none
 
 /-- The hypothesis in scope that states `goal` (up to reducible unfolding), by its name when it has
@@ -204,7 +206,10 @@ private def domainAt (entry : DomainEntry) (us : List Level) (args : Array Expr)
   let some info := (← getEnv).find? entry.predicate | return none
   let arity := info.type.getForallBinderNames.length
   if args.size < arity then return none
-  return some ((info.instantiateValueLevelParams! us).beta (args.extract 0 arity)).headBeta
+  let goal := ((info.instantiateValueLevelParams! us).beta (args.extract 0 arity)).headBeta
+  -- `∫ x, X 0 x ∂P` is `integral P (fun x => X 0 x)`: its domain reads, and is found, as
+  -- `Integrable (X 0) P`
+  return some (← Meta.transform goal (post := fun e => return .done e.eta))
 
 /-- Whether the formula `f` says the same whatever value `e` takes: `∀ c, f[e := c] ↔ f`, proved by
 a discharger in the context `lctx` of `f`. Only when `e` is about that context alone: a use under a
@@ -269,6 +274,24 @@ private def check (e : Expr) (c : Name) (us : List Level) (args : Array Expr)
 private def isProof' (e : Expr) : MetaM Bool := do
   try isProof e catch _ => return true
 
+/-- Runs `k` with the parts of a hypothesis `t` in scope as well: both sides of a conjunction, and
+the witness and property of an existential, recursively. `∃ N, ∀ ω, τ ω ≤ N` then gives the bound
+a lemma needs. -/
+private partial def withParts (t : Expr) (k : M Unit) : M Unit := do
+  let t' ← whnfR t
+  if t'.isAppOfArity ``And 2 then
+    let a := t'.appFn!.appArg!
+    let b := t'.appArg!
+    withLocalDeclD `_part a fun _ => withParts a <| withLocalDeclD `_part b fun _ => withParts b k
+  else if t'.isAppOfArity ``Exists 2 then
+    match t'.appArg! with
+    | .lam n dom body _ =>
+      withLocalDeclD n dom fun w => do
+        let p := body.instantiate1 w
+        withLocalDeclD `_part p fun _ => withParts p k
+    | _ => k
+  else k
+
 mutual
 
 /-- Walks a term inside a statement, with what is in scope. -/
@@ -290,7 +313,7 @@ private partial def walk (e : Expr) : M Unit := do
 otherwise. -/
 private partial def intro (n : Name) (bi : BinderInfo) (t b : Expr) : M Unit :=
   withLocalDecl n bi t fun x => do
-    if ← isProp t then walk (b.instantiate1 x)
+    if ← isProp t then withParts t (walk (b.instantiate1 x))
     else withReader (fun c => { c with bound := c.bound.push x.fvarId! }) (walk (b.instantiate1 x))
 
 /-- Walks an application: the connectives that bring something in scope, then the definitions
@@ -336,7 +359,9 @@ private partial def walkStatement (e : Expr) (hyps : Nat := 0) : M Unit := do
     withReader (fun c => { c with place := if hyp then .hypothesis name hyps else .binder name
                                   formula := if hyp then some (t, lctx, insts) else none })
       (walk t)
-    withLocalDecl n bi t fun x => walkStatement (b.instantiate1 x) hyps
+    withLocalDecl n bi t fun x =>
+      if hyp then withParts t (walkStatement (b.instantiate1 x) hyps)
+      else walkStatement (b.instantiate1 x) hyps
   | .mdata _ b => walkStatement b hyps
   | _ =>
     let lctx ← getLCtx

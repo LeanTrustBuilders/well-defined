@@ -37,6 +37,9 @@ theorem unapplied : (pred' ∘ Nat.succ) 0 = 0 := rfl
 theorem two_args (a : Nat) : div' a 2 ≤ a := by sorry
 -- nested: the inner use is checked too
 theorem nested (n : Nat) (h : 1 < n) : pred' (pred' n) < n := by sorry
+-- the parts of a hypothesis are in scope: both sides of ∧, the witness and property of ∃
+theorem hyp_parts (n : Nat) (h : n ≠ 3 ∧ 0 < n) : pred' n < n := by sorry
+theorem hyp_exists (f : Nat → Nat) (h : ∃ k, 0 < f k) : ∃ k, pred' (f k) < f k := by sorry
 -- repeated uses count once, and the statement says the same whatever value they take
 theorem repeated (n : Nat) : pred' n = pred' n := rfl
 -- the value does not matter: irrelevant
@@ -140,3 +143,16 @@ info: WellDefined.Test.hyp_matters:
   hypothesis h: pred' n, needs 0 < n: open
 -/
 #guard_msgs in #well_defined hyp_matters
+
+/--
+info: WellDefined.Test.hyp_parts:
+  conclusion: pred' n, needs 0 < n: discharged by assumption (part of a hypothesis)
+-/
+#guard_msgs in #well_defined hyp_parts
+
+-- a witness in the conclusion is another variable: Event-B's WD(∃ x, P) is ∀ x, WD(P)
+/--
+info: WellDefined.Test.hyp_exists:
+  conclusion: pred' (f k), needs 0 < f k, for every k: open
+-/
+#guard_msgs in #well_defined hyp_exists

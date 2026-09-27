@@ -52,8 +52,13 @@ claims, where it is what the claim leaves unsaid.
 ## Dischargers
 
 Tactics, named as text and parsed in the analyzed environment, so that one runs only if the
-library imports it. The default list is `omega`, `positivity`, `fun_prop`, `norm_num`, `simp_all`:
-the Mathlib ones are skipped for a project without Mathlib. Each gets a budget of heartbeats per
+library imports it. The default list is `omega`, `infer_instance`, `positivity`, `fun_prop`,
+`norm_num`, `simp_all`: the Mathlib ones are skipped for a project without Mathlib.
+
+They know nothing of the facts particular to a domain: that a random variable in L² is integrable,
+or a martingale's values. A catalogue that declares domains can define a tactic for them, and name
+it as a discharger: the Mathlib catalogue's `mathlib_catalogue_discharger` is a `solve_by_elim` over
+such lemmas. Each gets a budget of heartbeats per
 obligation (2000, in the unit of `maxHeartbeats`: a hundredth of Lean's default). What is open
 depends on them, so a report names the dischargers it used.
 
