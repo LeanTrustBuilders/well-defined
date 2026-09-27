@@ -384,9 +384,13 @@ def Analyzer.obligationsOfType (a : Analyzer) (type : Expr) : MetaM (Array Oblig
       out := out.push o
   return out
 
-/-- The obligations of the declaration `decl`'s statement. -/
+/-- The obligations of the declaration `decl`'s statement, printed from inside its namespace as its
+source reads (`Integrable f μ` for a theorem in `MeasureTheory`), as the extractor prints
+statements. -/
 def Analyzer.obligationsOf (a : Analyzer) (decl : Name) : MetaM (Array Obligation) := do
-  a.obligationsOfType (← getConstInfo decl).type
+  let type := (← getConstInfo decl).type
+  withTheReader Core.Context (fun c => { c with currNamespace := decl.getPrefix }) do
+    a.obligationsOfType type
 
 /-! ## Reports -/
 
