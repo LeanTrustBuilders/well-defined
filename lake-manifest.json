@@ -1,0 +1,16 @@
+{"version": "1.2.0",
+ "packagesDir": ".lake/packages",
+ "packages":
+ [{"url": "https://github.com/LeanTrustBuilders/annotations",
+   "type": "git",
+   "subDir": null,
+   "scope": "",
+   "rev": "90e4a33593841a1fb186ca91eecce0e89718ee67",
+   "name": "TrustAnnotations",
+   "manifestFile": "lake-manifest.json",
+   "inputRev": "main",
+   "inherited": false,
+   "configFile": "lakefile.toml"}],
+ "name": "WellDefined",
+ "lakeDir": ".lake",
+ "fixedToolchain": false}

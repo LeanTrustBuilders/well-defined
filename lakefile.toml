@@ -1,0 +1,20 @@
+name = "WellDefined"
+version = "0.1.0"
+defaultTargets = ["WellDefined"]
+
+# Lean core, and the annotations the obligations are read from: `@[domain]` above all. A project
+# does not depend on this package; the tools that analyze it do (the extractor, a CI step).
+[[require]]
+name = "TrustAnnotations"
+git = "https://github.com/LeanTrustBuilders/annotations"
+# `main` follows the newest toolchain, `lean-v<toolchain>` older ones.
+rev = "main"
+
+[[lean_lib]]
+name = "WellDefined"
+
+# The `#guard_msgs` checks, as a separate target: building it runs them.
+[[lean_lib]]
+name = "WellDefinedTest"
+roots = ["WellDefined.Test"]
+globs = ["WellDefined.Test.*"]
