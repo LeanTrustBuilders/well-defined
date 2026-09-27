@@ -59,7 +59,7 @@ They know nothing of the facts particular to a domain: that a random variable in
 or a martingale's values. A catalogue that declares domains can define a tactic for them, and name
 it as a discharger: the Mathlib catalogue's `mathlib_catalogue_discharger` is a `solve_by_elim` over
 such lemmas. Each gets a budget of heartbeats per
-obligation (2000, in the unit of `maxHeartbeats`: a hundredth of Lean's default). What is open
+obligation (10000, in the unit of `maxHeartbeats`: a twentieth of Lean's default). What is open
 depends on them, so a report names the dischargers it used.
 
 Proofs and instances inside a statement are not walked.

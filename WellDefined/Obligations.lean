@@ -108,8 +108,8 @@ structure Config where
   dischargers : Array String :=
     #["omega", "infer_instance", "positivity", "fun_prop", "norm_num", "simp_all"]
   /-- The budget of each discharger on each obligation, in the unit of the option `maxHeartbeats`
-  (thousands of heartbeats): a hundredth of Lean's default. -/
-  heartbeats : Nat := 2000
+  (thousands of heartbeats): a twentieth of Lean's default. -/
+  heartbeats : Nat := 10000
   /-- Whether to try to prove the negation of what is not discharged. -/
   refute : Bool := true
 deriving Repr, Inhabited
