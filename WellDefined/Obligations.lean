@@ -264,10 +264,10 @@ private def domainAt (entry : DomainEntry) (us : List Level) (args : Array Expr)
   let some info := (← getEnv).find? entry.predicate | return none
   let arity := info.type.getForallBinderNames.length
   if args.size < arity then return none
-  let goal := ((info.instantiateValueLevelParams! us).beta (args.extract 0 arity)).headBeta
   -- `∫ x, X 0 x ∂P` is `integral P (fun x => X 0 x)`: its domain reads, and is found, as
-  -- `Integrable (X 0) P`
-  return some (← Meta.transform goal (post := fun e => return .done e.eta))
+  -- `Integrable (X 0) P`. Only the arguments: an integral inside one still reads `∫ x, X x ∂μ`.
+  let args := (args.extract 0 arity).map (·.eta)
+  return some ((info.instantiateValueLevelParams! us).beta args).headBeta
 
 /-- Whether, where the domain `goal` fails, `f` says the same whatever value `e` takes:
 `∀ c, ¬goal → (f[e := c] ↔ f)` for a formula, `∀ c, ¬goal → f[e := c] = f` for a definition's body,
