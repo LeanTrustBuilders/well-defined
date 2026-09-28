@@ -198,6 +198,7 @@ private def condition (n : Name) : Option String :=
   | `_part => some "part of a hypothesis"
   | `_member => some "what the binder ranges over"
   | `_domain => some "the declared domain"
+  | `_domainPart => some "part of the declared domain"
   | _ => none
 
 /-- The hypothesis in scope that states `goal` (up to reducible unfolding), by its name when it has
@@ -362,18 +363,19 @@ private def isProof' (e : Expr) : MetaM Bool := do
 /-- Runs `k` with the parts of a hypothesis `t` in scope as well: both sides of a conjunction, and
 the witness and property of an existential, recursively. `∃ N, ∀ ω, τ ω ≤ N` then gives the bound
 a lemma needs. -/
-private partial def withParts (t : Expr) (k : M Unit) : M Unit := do
+private partial def withParts (t : Expr) (k : M Unit) (part : Name := `_part) : M Unit := do
   let t' ← whnfR t
   if t'.isAppOfArity ``And 2 then
     let a := t'.appFn!.appArg!
     let b := t'.appArg!
-    withLocalDeclD `_part a fun _ => withParts a <| withLocalDeclD `_part b fun _ => withParts b k
+    withLocalDeclD part a fun _ => withParts a (part := part) <|
+      withLocalDeclD part b fun _ => withParts b k part
   else if t'.isAppOfArity ``Exists 2 then
     match t'.appArg! with
     | .lam n dom body _ =>
       withLocalDeclD n dom fun w => do
         let p := body.instantiate1 w
-        withLocalDeclD `_part p fun _ => withParts p k
+        withLocalDeclD part p fun _ => withParts p k part
     | _ => k
   else k
 
@@ -520,7 +522,7 @@ private def walkBody (entry : DomainEntry) (us : List Level) (args : Array Expr)
     withReader (fun c => { c with place := .body index, formula := some (body, lctx, insts) })
       (walk body)
   match ← domainAt entry us args with
-  | some dom => withLocalDeclD `_domain dom fun _ => withParts dom go
+  | some dom => withLocalDeclD `_domain dom fun _ => withParts dom go `_domainPart
   | none => go
 
 /-- The obligations of the body of `decl`, a definition with a declared domain (the *inside*
