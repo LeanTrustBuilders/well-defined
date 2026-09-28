@@ -16,8 +16,21 @@ what is in scope where the application sits.
 * the left side of `∧` on its right, and the negation of the left side of `∨` on its right;
 * the condition of an `if` in its first branch, and its negation in the second.
 
-A variable bound inside the statement (`∫ x, Real.log (f x) ∂μ`) is in scope with no hypothesis
-about it, so the obligation is about every value of it; the report says so (`bound`).
+**Binders** bring something about the variable they bind, by a table (`Config.binders`, Mathlib's
+by default):
+* `∑ i ∈ s, f i`, `∏ i ∈ s`, `s.sup f`, `s.inf f`, `s.indicator f` bring `i ∈ s`;
+* `∫ x, f x ∂μ` and `∫⁻` need their body only for almost every `x`, and `∀ᶠ x in l, p x` and
+  `Tendsto f l l'` only eventually along `l`. An obligation about such a variable becomes
+  `∀ᵐ x ∂μ, …` or `∀ᶠ x in l, …`, with what the walk brought in scope since as hypotheses inside, and
+  is also tried at every point (`∀ x, …` implies it).
+
+Any other bound variable (`fun k => …`, `∑' i`) has no hypothesis about it: the obligation is about
+every value of it, and the report says so (`bound`).
+
+**Definitions' bodies** carry the *inside* obligation: under the definition's own declared domain,
+each use in its body is inside the domain of what it uses, or its value does not matter there. A
+definition by cases is read through its equation lemmas, one case at a time, with the case's
+pattern in the domain; a recursive call is a use like any other.
 
 A domain that is a conjunction (`∃ hm : m ≤ m₀, SigmaFinite (μ.trim hm) ∧ Integrable f μ`, a
 conjunction whose later parts depend on the first) gives one obligation per part, each with the
@@ -25,9 +38,10 @@ parts before it in scope: which part is left open is what a reader needs.
 
 **How an obligation comes out:**
 * `discharged`: proved from what is in scope, by a hypothesis or by one of the dischargers;
-* `irrelevant`: the statement says the same whatever value the application takes. With the use
-  replaced by a variable `c`, `∀ c, F[c] ↔ F` is proved, `F` being the hypothesis or conclusion it
-  sits in, from the theorem's hypotheses alone (`0 * Real.log x = 0`);
+* `irrelevant`: where the domain fails, the statement says the same whatever value the application
+  takes. With the use replaced by a variable `c`, `∀ c, ¬domain → (F[c] ↔ F)` is proved, `F` being
+  the hypothesis or conclusion it sits in, from the theorem's hypotheses alone
+  (`0 * Real.log x = 0`); in a definition's body, `F[c] = F` for the body;
 * `refuted`: its negation is proved. The statement is about the definition outside its domain, as
   a lemma giving the value there is (`integral_undef`);
 * `open`: neither. This is the statement's residual: what it leaves unsaid about the domain;
@@ -73,12 +87,15 @@ inductive Place where
   | hypothesis (name : String) (index : Nat)
   /-- In the conclusion. -/
   | conclusion
+  /-- In a definition's body: in its `index`-th case (from 1), or its only one (`0`). -/
+  | body (index : Nat)
 deriving Repr, BEq, Inhabited
 
 def Place.toString : Place → String
   | .binder n => s!"binder {n}"
   | .hypothesis n i => if n.isEmpty then s!"hypothesis {i}" else s!"hypothesis {n}"
   | .conclusion => "conclusion"
+  | .body i => if i == 0 then "body" else s!"body, case {i}"
 
 /-- One application of a definition with a declared domain, and what became of its obligation. -/
 structure Obligation where
@@ -102,6 +119,36 @@ deriving Repr, Inhabited
 
 /-! ## Configuration -/
 
+/-- What a binder brings in scope for the variable it binds. -/
+inductive Brings where
+  /-- `x ∈ s`, `s` being the argument at this position: `∑ i ∈ s, f i` brings `i ∈ s`. -/
+  | mem (set : Nat)
+  /-- Only almost every `x` matters, under the measure at this position: `∫ x, f x ∂μ`. -/
+  | ae (measure : Nat)
+  /-- Only eventually along the filter at this position: `∀ᶠ x in l, p x`, `Tendsto f l l'`. -/
+  | eventually (filter : Nat)
+deriving Repr, Inhabited
+
+/-- A constant whose argument at position `fn`, a function, binds a variable about which the
+application `brings` something. -/
+structure BinderRule where
+  const : Name
+  fn : Nat
+  brings : Brings
+deriving Repr, Inhabited
+
+/-- Mathlib's binders. By name: a rule whose constant the environment lacks does nothing. -/
+def mathlibBinders : Array BinderRule := #[
+  { const := `Finset.sum, fn := 4, brings := .mem 3 },
+  { const := `Finset.prod, fn := 4, brings := .mem 3 },
+  { const := `Finset.sup, fn := 5, brings := .mem 4 },
+  { const := `Finset.inf, fn := 5, brings := .mem 4 },
+  { const := `Set.indicator, fn := 4, brings := .mem 3 },
+  { const := `MeasureTheory.integral, fn := 6, brings := .ae 5 },
+  { const := `MeasureTheory.lintegral, fn := 3, brings := .ae 2 },
+  { const := `Filter.Eventually, fn := 1, brings := .eventually 2 },
+  { const := `Filter.Tendsto, fn := 2, brings := .eventually 3 }]
+
 structure Config where
   /-- The dischargers, as tactic text, tried in order after the hypotheses in scope. Those that do
   not parse in the analyzed environment are left out. -/
@@ -112,6 +159,8 @@ structure Config where
   heartbeats : Nat := 10000
   /-- Whether to try to prove the negation of what is not discharged. -/
   refute : Bool := true
+  /-- The binders that bring something about the variable they bind. -/
+  binders : Array BinderRule := mathlibBinders
 deriving Repr, Inhabited
 
 /-- A discharger, parsed. -/
@@ -124,6 +173,7 @@ structure Analyzer where
   cfg : Config
   domains : NameMap DomainEntry
   dischargers : Array Discharger
+  binders : NameMap BinderRule
 
 /-- The analyzer for `env`: its declared domains, and those of `cfg`'s dischargers that parse in
 it. -/
@@ -133,7 +183,8 @@ def Analyzer.new (env : Environment) (cfg : Config := {}) : Analyzer :=
     dischargers := cfg.dischargers.filterMap fun t =>
       match Parser.runParserCategory env `tactic t with
       | .ok stx => some { text := t, stx }
-      | .error _ => none }
+      | .error _ => none
+    binders := cfg.binders.foldl (fun m r => m.insert r.const r) {} }
 
 /-! ## Discharging -/
 
@@ -145,6 +196,8 @@ private def condition (n : Name) : Option String :=
   | `_ifCondition => some "the condition of if"
   | `_ifNot => some "the condition of if being false"
   | `_part => some "part of a hypothesis"
+  | `_member => some "what the binder ranges over"
+  | `_domain => some "the declared domain"
   | _ => none
 
 /-- The hypothesis in scope that states `goal` (up to reducible unfolding), by its name when it has
@@ -175,12 +228,16 @@ private def proves (goal : Expr) (d : Discharger) (heartbeats : Nat) : MetaM Boo
   return ok
 
 /-- How `goal` is decided from what is in scope: by a hypothesis, or by the first discharger that
-proves it. -/
-private def decide? (a : Analyzer) (goal : Expr) :
+proves it. A goal `∀ᶠ x in l, P x` (`∀ᵐ x ∂μ`) is also tried at every point: `∀ x, P x` implies it. -/
+private partial def decide? (a : Analyzer) (goal : Expr) :
     MetaM (Option (String × Option String)) := do
   if let some h ← hypothesisFor? goal then return some ("assumption", h)
   for d in a.dischargers do
     if ← proves goal d a.cfg.heartbeats then return some (d.text, none)
+  if goal.isAppOfArity `Filter.Eventually 3 then
+    if let .lam n t b _ := goal.appFn!.appArg! then
+      return ← withLocalDeclD n t fun x => forallTelescope (b.instantiate1 x) fun _ body => do
+        return (← decide? a body).map fun (how, h) => (s!"{how}, at every point", h)
   return none
 
 /-! ## The walk -/
@@ -191,8 +248,9 @@ private structure Ctx where
   /-- The hypothesis or conclusion being walked, with the theorem's variables and hypotheses in
   scope for it and nothing the walk brought in since. -/
   formula : Option (Expr × LocalContext × LocalInstances) := none
-  /-- The variables bound inside the statement, as opposed to the theorem's own. -/
-  bound : Array FVarId := #[]
+  /-- The variables bound inside the statement, as opposed to the theorem's own, each with the filter
+  along which its binder needs the body (`ae μ` for `∫ x, … ∂μ`), if any. -/
+  bound : Array (FVarId × Option Expr) := #[]
 
 private abbrev M := ReaderT Ctx <| StateRefT (Array Obligation) MetaM
 
@@ -211,25 +269,52 @@ private def domainAt (entry : DomainEntry) (us : List Level) (args : Array Expr)
   -- `Integrable (X 0) P`
   return some (← Meta.transform goal (post := fun e => return .done e.eta))
 
-/-- Whether the formula `f` says the same whatever value `e` takes: `∀ c, f[e := c] ↔ f`, proved by
-a discharger in the context `lctx` of `f`. Only when `e` is about that context alone: a use under a
-binder, or next to a condition the walk brought in scope, is not tried. -/
-private def irrelevant? (a : Analyzer) (e f : Expr) (lctx : LocalContext)
+/-- Whether, where the domain `goal` fails, `f` says the same whatever value `e` takes:
+`∀ c, ¬goal → (f[e := c] ↔ f)` for a formula, `∀ c, ¬goal → f[e := c] = f` for a definition's body,
+proved by a discharger in the context `lctx` of `f`. Only when `e` and `goal` are about that
+context alone: a use under a binder, or next to a condition the walk brought in scope, is not
+tried. -/
+private def irrelevant? (a : Analyzer) (e goal f : Expr) (lctx : LocalContext)
     (insts : LocalInstances) : MetaM (Option String) := do
-  if e.hasAnyFVar (!lctx.contains ·) then return none
+  if e.hasAnyFVar (!lctx.contains ·) || goal.hasAnyFVar (!lctx.contains ·) then return none
   withLCtx lctx insts do
     let abst ← kabstract f e
     unless abst.hasLooseBVars do return none
-    let goal := mkForall `c .default (← inferType e) (mkIff abst f)
+    let prop ← isProp f
+    let same ← withLocalDeclD `c (← inferType e) fun c => do
+      let fc := abst.instantiate1 c
+      mkForallFVars #[c] (← mkArrow (mkNot goal) (← if prop then pure (mkIff fc f) else mkEq fc f))
     for d in a.dischargers do
-      if ← proves goal d a.cfg.heartbeats then return some d.text
+      if ← proves same d a.cfg.heartbeats then return some d.text
     return none
+
+/-- The obligation `goal` as the statement needs it. About a variable bound by `∫ x … ∂μ`, `∀ᵐ`,
+`∀ᶠ` or `Tendsto`, it is needed only almost everywhere, or eventually: it becomes `∀ᵐ x ∂μ, …`,
+with everything the walk brought in scope since `x` inside it, as hypotheses or variables. -/
+private def eventualGoal (bound : Array (FVarId × Option Expr)) (goal : Expr) : MetaM Expr := do
+  let some (x0, _) := bound.find? fun (x, l?) => l?.isSome && goal.containsFVar x | return goal
+  let lctx ← getLCtx
+  let some d0 := lctx.find? x0 | return goal
+  let after := lctx.foldl (init := #[]) fun acc d =>
+    if d.index ≥ d0.index && !d.isImplementationDetail then acc.push d else acc
+  let mut g := goal
+  for d in after.reverse do
+    let y := mkFVar d.fvarId
+    match bound.find? (·.1 == d.fvarId) with
+    | some (_, some l) =>
+      if g.containsFVar d.fvarId then
+        g ← mkAppM `Filter.Eventually #[← mkLambdaFVars #[y] g, l]
+    | _ =>
+      if (← isProp d.type) || g.containsFVar d.fvarId then g ← mkForallFVars #[y] g
+  return g
 
 /-- Decides one part of the domain at `e`, and records it. -/
 private def checkPart (e goal : Expr) (base : Obligation) : M Unit := do
   let ctx ← read
   let a := ctx.analyzer
-  let bound ← ctx.bound.filterMapM fun x => do
+  let original := goal
+  let goal ← try eventualGoal ctx.bound goal catch _ => pure goal
+  let bound ← ctx.bound.filterMapM fun (x, _) => do
     if goal.containsFVar x then return some (← x.getUserName).eraseMacroScopes.toString
     return none
   let o := { base with goal := ← text goal, bound }
@@ -237,7 +322,7 @@ private def checkPart (e goal : Expr) (base : Obligation) : M Unit := do
     modify (·.push { o with status := .discharged, how? := how, hypothesis? := h })
     return
   if let some (f, lctx, insts) := ctx.formula then
-    if let some how ← irrelevant? a e f lctx insts then
+    if let some how ← irrelevant? a e original f lctx insts then
       modify (·.push { o with status := .irrelevant, how? := how })
       return
   if a.cfg.refute then
@@ -314,7 +399,7 @@ otherwise. -/
 private partial def intro (n : Name) (bi : BinderInfo) (t b : Expr) : M Unit :=
   withLocalDecl n bi t fun x => do
     if ← isProp t then withParts t (walk (b.instantiate1 x))
-    else withReader (fun c => { c with bound := c.bound.push x.fvarId! }) (walk (b.instantiate1 x))
+    else withReader (fun c => { c with bound := c.bound.push (x.fvarId!, none) }) (walk (b.instantiate1 x))
 
 /-- Walks an application: the connectives that bring something in scope, then the definitions
 with a domain, then the arguments that are neither proofs nor instances. -/
@@ -334,15 +419,43 @@ private partial def walkApp (e : Expr) : M Unit := do
     withLocalDeclD `_ifNot (mkNot args[1]!) fun _ => walk args[4]!
     return
   let f := e.getAppFn
+  let mut rule? : Option BinderRule := none
   match f with
   | .const c us =>
     if let some d := (← read).analyzer.domains.find? c then check e c us args d
+    rule? := (← read).analyzer.binders.find? c
   | _ => walk f
   let info ← try getFunInfoNArgs f args.size catch _ => return
   for h : i in [:args.size] do
     if info.paramInfo[i]?.any (·.isInstImplicit) then continue
     if ← isProof' args[i] then continue
-    walk args[i]
+    match rule?, args[i] with
+    | some r, .lam n t b bi =>
+      if r.fn == i then walk t; bindWith r args n bi t b else walk args[i]
+    | _, _ => walk args[i]
+
+/-- Brings the variable a binder rule's function binds in scope, with what the rule says about it. -/
+private partial def bindWith (r : BinderRule) (args : Array Expr) (n : Name) (bi : BinderInfo)
+    (t b : Expr) : M Unit :=
+  withLocalDecl n bi t fun x => do
+    let body := b.instantiate1 x
+    let arg (k : Nat) : Option Expr := args[k]?
+    match r.brings with
+    | .mem k =>
+      let hyp? ← match arg k with
+        | some s => try some <$> mkAppM ``Membership.mem #[s, x] catch _ => pure none
+        | none => pure none
+      withReader (fun c => { c with bound := c.bound.push (x.fvarId!, none) }) do
+        match hyp? with
+        | some h => withLocalDeclD `_member h fun _ => walk body
+        | none => walk body
+    | .ae k =>
+      let l? ← match arg k with
+        | some μ => try some <$> mkAppM `MeasureTheory.ae #[μ] catch _ => pure none
+        | none => pure none
+      withReader (fun c => { c with bound := c.bound.push (x.fvarId!, l?) }) (walk body)
+    | .eventually k =>
+      withReader (fun c => { c with bound := c.bound.push (x.fvarId!, arg k) }) (walk body)
 
 end
 
@@ -372,9 +485,7 @@ private partial def walkStatement (e : Expr) (hyps : Nat := 0) : M Unit := do
 
 /-- The obligations of the statement `type`: one per application of a definition with a declared
 domain, repeated applications counted once. -/
-def Analyzer.obligationsOfType (a : Analyzer) (type : Expr) : MetaM (Array Obligation) := do
-  if a.domains.isEmpty || !type.getUsedConstants.any a.domains.contains then return #[]
-  let (_, obs) ← ((walkStatement type).run { analyzer := a }).run #[]
+private def dedupe (obs : Array Obligation) : Array Obligation := Id.run do
   let mut seen : Std.HashSet (String × String × String × String) := {}
   let mut out := #[]
   for o in obs do
@@ -384,6 +495,14 @@ def Analyzer.obligationsOfType (a : Analyzer) (type : Expr) : MetaM (Array Oblig
       out := out.push o
   return out
 
+private def Analyzer.run (a : Analyzer) (x : M Unit) : MetaM (Array Obligation) := do
+  let (_, obs) ← (x.run { analyzer := a }).run #[]
+  return dedupe obs
+
+def Analyzer.obligationsOfType (a : Analyzer) (type : Expr) : MetaM (Array Obligation) := do
+  if a.domains.isEmpty || !type.getUsedConstants.any a.domains.contains then return #[]
+  a.run (walkStatement type)
+
 /-- The obligations of the declaration `decl`'s statement, printed from inside its namespace as its
 source reads (`Integrable f μ` for a theorem in `MeasureTheory`), as the extractor prints
 statements. -/
@@ -392,12 +511,48 @@ def Analyzer.obligationsOf (a : Analyzer) (decl : Name) : MetaM (Array Obligatio
   withTheReader Core.Context (fun c => { c with currNamespace := decl.getPrefix }) do
     a.obligationsOfType type
 
+/-- Walks one case of a definition's body, with the definition's domain at `args` in scope. -/
+private def walkBody (entry : DomainEntry) (us : List Level) (args : Array Expr) (body : Expr)
+    (index : Nat) : M Unit := do
+  let go : M Unit := do
+    let lctx ← getLCtx
+    let insts ← getLocalInstances
+    withReader (fun c => { c with place := .body index, formula := some (body, lctx, insts) })
+      (walk body)
+  match ← domainAt entry us args with
+  | some dom => withLocalDeclD `_domain dom fun _ => withParts dom go
+  | none => go
+
+/-- The obligations of the body of `decl`, a definition with a declared domain (the *inside*
+obligation): each use in it of a definition with a declared domain, with `decl`'s own domain in
+scope. A definition by cases, or a recursive one, is read through its equation lemmas, one case at a
+time, each with its pattern in the domain. Printed from inside `decl`'s namespace. -/
+def Analyzer.bodyObligationsOf (a : Analyzer) (decl : Name) : MetaM (Array Obligation) := do
+  let some entry := a.domains.find? decl | return #[]
+  let .defnInfo v ← getConstInfo decl | return #[]
+  withTheReader Core.Context (fun c => { c with currNamespace := decl.getPrefix }) do
+    let eqns ← try getEqnsFor? decl catch _ => pure none
+    match eqns with
+    | some eqs =>
+      if eqs.isEmpty then return #[]
+      a.run do
+        for h : i in [:eqs.size] do
+          let ty := (← getConstInfo eqs[i]).type
+          forallTelescope ty fun _ concl => do
+            let some (_, lhs, rhs) := concl.eq? | return
+            let us := lhs.getAppFn.constLevels!
+            walkBody entry us lhs.getAppArgs rhs (if eqs.size == 1 then 0 else i + 1)
+    | none =>
+      let us := v.levelParams.map mkLevelParam
+      a.run <| lambdaTelescope v.value fun xs body => walkBody entry us xs body 0
+
 /-! ## Reports -/
 
 def Place.fields : Place → List (String × Json)
   | .binder n => [("place", ("binder" : Json)), ("name", toJson n)]
   | .hypothesis n i => [("place", ("hypothesis" : Json)), ("name", toJson n), ("index", toJson i)]
   | .conclusion => [("place", ("conclusion" : Json))]
+  | .body i => [("place", ("body" : Json)), ("index", toJson i)]
 
 /-- An obligation as a row of the facet `welldefined/1`. -/
 def Obligation.asJson (o : Obligation) : Json :=
