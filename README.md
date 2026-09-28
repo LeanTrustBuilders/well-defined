@@ -1,12 +1,11 @@
 # WellDefined
 
-The well-definedness analyzer of the [LeanTrustBuilders](https://github.com/LeanTrustBuilders)
-suite: it checks statements against what their definitions are declared to mean. See
-`well-definedness.md` in [the design notes](https://github.com/LeanTrustBuilders/design/tree/main/AI_initial_docs).
+A well-definedness analyzer for Lean: it checks statements against where their definitions are
+declared to apply.
 
 Depends on Lean core and [TrustAnnotations](https://github.com/LeanTrustBuilders/annotations), whose
-attributes it reads. A project does not depend on it: the tools that analyze a project do. The
-extractor runs it on a whole library (`trust-extract welldefined`), and a site shows the results.
+attributes it reads. A project does not depend on it: the tools that analyze a project do, such as
+the [extractor](https://github.com/LeanTrustBuilders/extractor) (`trust-extract welldefined`).
 
 ## What it checks
 
@@ -66,8 +65,8 @@ WellDefined.Test.Bodies.countDown:
 ```
 
 (`countDown (n + 1) = countDown n + 1` calls itself at `0`, outside its domain `0 < n`.) An `open`
-or `refuted` obligation in a body is a definition that relies on a junk value inside its own domain:
-an F4 finding of the design notes, proved rather than suspected when refuted.
+or `refuted` obligation in a body is a definition that may rely on a junk value inside its own
+domain; a `refuted` one does.
 
 `open` is not a verdict. In library lemmas a use outside the domain is often deliberate: `add_div`
 needs no `c ≠ 0` because `x / 0 = 0`. It matters in the results a project puts forward, its
@@ -79,12 +78,11 @@ Tactics, named as text and parsed in the analyzed environment, so that one runs 
 library imports it. The default list is `omega`, `infer_instance`, `positivity`, `fun_prop`,
 `norm_num`, `simp_all`: the Mathlib ones are skipped for a project without Mathlib.
 
-They know nothing of the facts particular to a domain: that a random variable in L² is integrable,
-or a martingale's values. A catalogue that declares domains can define a tactic for them, and name
-it as a discharger: the Mathlib catalogue's `mathlib_catalogue_discharger` is a `solve_by_elim` over
-such lemmas. Each gets a budget of heartbeats per
-obligation (10000, in the unit of `maxHeartbeats`: a twentieth of Lean's default). What is open
-depends on them, so a report names the dischargers it used.
+They know nothing of the facts particular to a domain, such as that a random variable in L² is
+integrable. A catalogue that declares domains can define a tactic for them (a `solve_by_elim` over
+such lemmas, say) and name it as a discharger. Each gets a budget of heartbeats per obligation
+(10000, in the unit of `maxHeartbeats`). What is open depends on them, so a report names the
+dischargers it used.
 
 Proofs and instances inside a statement are not walked.
 
@@ -101,11 +99,11 @@ WellDefined.Test.nested:
 From Lean, `(Analyzer.new env cfg).obligationsOf decl`, and `Obligation.asJson` for the rows of the
 dataset facet `welldefined/1`.
 
-## Not yet
+## Limits
 
-* Obligations for choice (`@[noncanonical]`) and for invariance under `@[up_to]` relations.
-* Derived domains, for definitions with none declared.
-* Binders other than the table's; binders that bring something other than membership or a filter.
+* The obligations are those of declared domains only: a definition with no `@[domain]` has none, and
+  `@[up_to]` relations give no obligation.
+* Only the binders of the table bring a hypothesis, and only membership or a filter.
 
 ## Tests
 
