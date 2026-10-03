@@ -105,6 +105,14 @@ dataset facet `welldefined/1`.
   `@[up_to]` relations give no obligation.
 * Only the binders of the table bring a hypothesis, and only membership or a filter.
 
+## Versions
+
+`main` is on the Lean toolchain of Mathlib's master. Every hour, the workflow Follow Mathlib's
+toolchain checks: when Mathlib has moved, it keeps the old toolchain on a branch
+`lean-v<toolchain>`, moves `main` to the new one once it builds with its tests, after TrustAnnotations has moved, and tags it
+`v<toolchain>`. A build that fails opens an issue labelled `toolchain` instead. The branches of older
+toolchains get no further changes.
+
 ## Tests
 
 `lake build WellDefinedTest` runs the `#guard_msgs` checks in `WellDefined/Test`.
