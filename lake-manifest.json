@@ -5,7 +5,7 @@
    "type": "git",
    "subDir": null,
    "scope": "",
-   "rev": "8c15634c82d405e75f48979a807573b6b86a3831",
+   "rev": "d8efb5e46cfb202fd1c9df9d0254b13f1d656fdf",
    "name": "TrustAnnotations",
    "manifestFile": "lake-manifest.json",
    "inputRev": "main",
