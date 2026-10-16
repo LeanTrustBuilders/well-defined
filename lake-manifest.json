@@ -8,7 +8,7 @@
    "rev": "f9f2371e07e5e6de2da2d5cff5c5e0b7a172da6d",
    "name": "TrustAnnotations",
    "manifestFile": "lake-manifest.json",
-   "inputRev": "main",
+   "inputRev": "lean-v4.35.0",
    "inherited": false,
    "configFile": "lakefile.toml"}],
  "name": "WellDefined",
